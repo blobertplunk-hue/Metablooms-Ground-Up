@@ -25,7 +25,7 @@ def test_guard_fails_on_state_mismatch(tmp_path: Path) -> None:
     (tmp_path / "runtime_state.json").write_text(
         json.dumps({"bad": True}), encoding="utf-8"
     )
-    with pytest.raises(Exception):
+    with pytest.raises(EngineError):
         run_guard(tmp_path, "staged")
 
 
@@ -52,7 +52,7 @@ def test_guard_fails_on_missing_proof_entry(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     (tmp_path / "PROOF_REGISTRY.jsonl").write_text("", encoding="utf-8")
-    with pytest.raises(Exception):
+    with pytest.raises(EngineError):
         run_guard(tmp_path, "staged")
 
 
@@ -104,7 +104,7 @@ def test_guard_fails_on_broken_proof_chain(tmp_path: Path) -> None:
     (tmp_path / "PROOF_REGISTRY.jsonl").write_text(
         "\n".join(json.dumps(line) for line in lines) + "\n", encoding="utf-8"
     )
-    with pytest.raises(Exception):
+    with pytest.raises(EngineError):
         run_guard(tmp_path, "staged")
 
 
@@ -145,7 +145,7 @@ def test_guard_fails_on_mismatched_events_hash(tmp_path: Path) -> None:
             "counterfactual_report_ref": "COUNTERFACTUAL_TEST_REPORT.json",
         },
     )
-    with pytest.raises(Exception):
+    with pytest.raises(EngineError):
         run_guard(tmp_path, "staged")
 
 

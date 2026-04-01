@@ -84,13 +84,24 @@ def run_guard(root: Path, mode: str) -> None:
             raise EngineError("governed execution contract missing")
 
 
-def _write_receipt(root: Path, result: str, mode: str, error: str = "") -> None:
+def _write_receipt(
+    root: Path,
+    result: str,
+    mode: str,
+    error: str = "",
+    run_id: str | None = None,
+    trace_id: str | None = None,
+) -> None:
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "mode": mode,
         "result": result,
         "error": error,
     }
+    if run_id is not None:
+        payload["run_id"] = run_id
+    if trace_id is not None:
+        payload["trace_id"] = trace_id
     (root / "GUARD_RECEIPT.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -100,14 +111,23 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["staged", "ci"], default="staged")
     parser.add_argument("--root", default=".")
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--trace-id", default=None)
     args = parser.parse_args()
     root = Path(args.root).resolve()
     try:
         run_guard(root, args.mode)
     except EngineError as exc:
-        _write_receipt(root, "FAIL", args.mode, str(exc))
+        _write_receipt(
+            root,
+            "FAIL",
+            args.mode,
+            str(exc),
+            run_id=args.run_id,
+            trace_id=args.trace_id,
+        )
         raise
-    _write_receipt(root, "PASS", args.mode)
+    _write_receipt(root, "PASS", args.mode, run_id=args.run_id, trace_id=args.trace_id)
     return 0
 
 

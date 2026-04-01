@@ -11,7 +11,7 @@ import re
 import subprocess
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -334,10 +334,21 @@ def _run_mpp_self_test(root: Path, changed_files: list[str] | None) -> None:
         raise EngineError("MPP self-test failed; fail-closed")
 
 
-def _run_mpp_guard(root: Path, mode: str = "ci") -> None:
+def _run_mpp_guard(
+    root: Path,
+    *,
+    mode: str = "ci",
+    run_id: str | None = None,
+    trace_id: str | None = None,
+) -> None:
     run_root = Path(__file__).resolve().parents[1]
+    cmd = ["python", "-m", "scripts.mpp_guard", "--mode", mode, "--root", str(root)]
+    if run_id:
+        cmd.extend(["--run-id", run_id])
+    if trace_id:
+        cmd.extend(["--trace-id", trace_id])
     result = subprocess.run(
-        ["python", "-m", "scripts.mpp_guard", "--mode", mode, "--root", str(root)],
+        cmd,
         cwd=str(run_root),
         capture_output=True,
         text=True,
@@ -345,25 +356,18 @@ def _run_mpp_guard(root: Path, mode: str = "ci") -> None:
     )
     if result.returncode != 0:
         raise EngineError("MPP guard failed; fail-closed")
-    receipt = root / "GUARD_RECEIPT.json"
-    if not receipt.exists():
-        _atomic_write_text(
-            receipt,
-            json.dumps(
-                {
-                    "timestamp": _now_iso(),
-                    "mode": mode,
-                    "result": "PASS",
-                    "error": "",
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-        )
+    if not (root / "GUARD_RECEIPT.json").exists():
+        raise EngineError("MPP guard missing GUARD_RECEIPT.json; fail-closed")
 
 
-def _verify_enforcement_receipt(path: Path) -> None:
+def _verify_enforcement_receipt(
+    path: Path,
+    *,
+    run_started_at: datetime,
+    max_staleness_seconds: int = 30,
+    expected_run_id: str | None = None,
+    expected_trace_id: str | None = None,
+) -> None:
     if not path.exists():
         raise EngineError(f"Missing enforcement receipt: {path.name}")
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -372,9 +376,25 @@ def _verify_enforcement_receipt(path: Path) -> None:
     timestamp = payload.get("timestamp")
     if not isinstance(timestamp, str):
         raise EngineError(f"Enforcement receipt missing timestamp: {path.name}")
-    today = datetime.now(timezone.utc).date().isoformat()
-    if not timestamp.startswith(today):
+    try:
+        receipt_time = datetime.fromisoformat(timestamp)
+    except ValueError as exc:
+        raise EngineError(
+            f"Enforcement receipt timestamp invalid: {path.name}"
+        ) from exc
+    if receipt_time.tzinfo is None:
+        receipt_time = receipt_time.replace(tzinfo=timezone.utc)
+    now = datetime.now(timezone.utc)
+    if receipt_time < (run_started_at - timedelta(seconds=max_staleness_seconds)):
         raise EngineError(f"Enforcement receipt is stale: {path.name}")
+    if receipt_time > now + timedelta(seconds=5):
+        raise EngineError(f"Enforcement receipt timestamp invalid: {path.name}")
+    if expected_run_id is not None:
+        if payload.get("run_id") != expected_run_id:
+            raise EngineError(f"Enforcement receipt run_id mismatch: {path.name}")
+    if expected_trace_id is not None:
+        if payload.get("trace_id") != expected_trace_id:
+            raise EngineError(f"Enforcement receipt trace_id mismatch: {path.name}")
 
 
 def _load_json_required(path: Path, label: str) -> dict[str, Any]:
@@ -1112,10 +1132,20 @@ def execute_with_recovery(
     required_override_token: str | None = None,
     changed_files: list[str] | None = None,
 ) -> dict[str, Any]:
+    run_started_at = datetime.now(timezone.utc)
+    run_id = str(uuid.uuid4())
     _run_mpp_self_test(paths.root, changed_files)
-    _run_mpp_guard(paths.root, mode="ci")
-    _verify_enforcement_receipt(paths.root / "MPP_SELF_TEST_RECEIPT.json")
-    _verify_enforcement_receipt(paths.root / "GUARD_RECEIPT.json")
+    _run_mpp_guard(paths.root, mode="ci", run_id=run_id, trace_id=task_id)
+    _verify_enforcement_receipt(
+        paths.root / "MPP_SELF_TEST_RECEIPT.json",
+        run_started_at=run_started_at,
+    )
+    _verify_enforcement_receipt(
+        paths.root / "GUARD_RECEIPT.json",
+        run_started_at=run_started_at,
+        expected_run_id=run_id,
+        expected_trace_id=task_id,
+    )
     _ensure_proof_registry_hard_dependency(paths)
 
     decision = decide_recovery(

@@ -1,6 +1,7 @@
 import pytest
 
 from src.turn_execution_engine import (
+    EngineError,
     _compute_replay_hash,
     _validate_event_order_integrity,
 )
@@ -28,7 +29,7 @@ def test_property_event_order_mutation_fails() -> None:
         {"event_id": "e2", "turn_id": 2},
     ]
     _validate_event_order_integrity(events)
-    with pytest.raises(Exception):
+    with pytest.raises(EngineError):
         _validate_event_order_integrity(list(reversed(events)))
 
 
