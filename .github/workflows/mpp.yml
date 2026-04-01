@@ -1,0 +1,37 @@
+name: mpp-enforcement
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pr-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -U pip
+      - run: pip install pytest hypothesis ruff mypy jsonschema semgrep
+      - run: ruff check .
+      - run: mypy src
+      - run: pytest -q
+      - run: python -m scripts.mpp_guard --mode=ci
+
+  full-check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -U pip
+      - run: pip install pytest hypothesis ruff mypy jsonschema semgrep
+      - run: pytest -q
+      - run: semgrep scan --config auto
+      - run: python -m scripts.mpp_self_test
+      - run: python -m scripts.mpp_guard --mode=ci

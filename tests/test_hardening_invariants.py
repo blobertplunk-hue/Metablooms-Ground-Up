@@ -1,0 +1,410 @@
+import json
+import hashlib
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from src.turn_execution_engine import (
+    EngineError,
+    EnginePaths,
+    _compute_replay_hash,
+    _execute_once_internal,
+    _validate_event_order_integrity,
+    _validate_output_consistency,
+    canonical_events_hash,
+    execute_once,
+    execute_with_recovery,
+)
+from src.validation_layer import ValidationError, append_registry_atomic
+
+
+BASE_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "required": ["event_id", "type", "ts", "turn_id", "idempotency_key", "payload"],
+    "properties": {
+        "event_id": {"type": "string"},
+        "type": {"type": "string", "enum": ["STAGE_ENQUEUED", "STAGE_EXECUTED"]},
+        "ts": {"type": "string"},
+        "turn_id": {"type": "integer"},
+        "idempotency_key": {"type": "string"},
+        "state_hash_before": {"type": "string"},
+        "state_hash_after": {"type": "string"},
+        "payload": {
+            "type": "object",
+            "required": ["stage_id", "bounded"],
+            "properties": {
+                "stage_id": {"type": "string"},
+                "bounded": {"type": "boolean"},
+                "mutates": {"type": "boolean"},
+            },
+        },
+    },
+}
+
+
+def _write(path: Path, payload: dict) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_controls(root: Path) -> None:
+    _write(root / "CURRENT_ROOT.json", {"canonical_root": str(root.resolve())})
+    _write(root / "EVENT_SCHEMA.json", BASE_SCHEMA)
+    (root / "AGENTS.md").write_text(
+        "runtime_state.json\nevents.jsonl\n", encoding="utf-8"
+    )
+    (root / "MASTER_WORKFLOW_V2.md").write_text(
+        "Load all control files\nReplay and validate events\nEnforce execution gates\n",
+        encoding="utf-8",
+    )
+    (root / "REPLAY_RULES.md").write_text(
+        "Replay must be deterministic\nstate_hash_before\nstate_hash_after\n",
+        encoding="utf-8",
+    )
+    (root / "EXECUTION_GATE_SPEC.md").write_text(
+        "schema_valid\nreplay_valid\nidempotency_valid\ncompensation_valid\nbounded_stage_available\n",
+        encoding="utf-8",
+    )
+    (root / "ACCEPTANCE_TESTS.md").write_text(
+        "Replay from `events.jsonl`\nExactly one bounded stage executed\nExecution is blocked\n",
+        encoding="utf-8",
+    )
+    (root / "CDR_SPEC.md").write_text(
+        "CDR-RAT\nCDR-ARCH\nCDR-CODE\nCDR-LINT\nTRADEOFFS\nFUTURE_GAPS\n",
+        encoding="utf-8",
+    )
+    (root / "CDR_SECURITY.md").write_text(
+        "INPUT_VALIDATION_REQUIRED\nOUTPUT_ENCODING_REQUIRED\nACCESS_CONTROL_REQUIRED\nSECRETS_HANDLING_REQUIRED\nSAFE_ERROR_HANDLING_REQUIRED\nSAFE_FILE_HANDLING_REQUIRED\n",
+        encoding="utf-8",
+    )
+    (root / "CDR_VERIFICATION.md").write_text(
+        "UNIT_TEST_REQUIRED\nINTEGRATION_TEST_REQUIRED\nACCEPTANCE_TEST_REQUIRED\nEXTERNAL_VALIDATION_REQUIRED\n",
+        encoding="utf-8",
+    )
+    (root / "CDR_OBSERVABILITY.md").write_text(
+        "STRUCTURED_LOGGING_REQUIRED\nSENSITIVE_DATA_REDACTION_REQUIRED\nNO_SECRET_LOGGING\nTRACEABILITY_REQUIRED\n",
+        encoding="utf-8",
+    )
+    (root / "CDR_LIFECYCLE.md").write_text(
+        "RATIONALE_MUST_UPDATE_WITH_CODE\nTRADEOFFS_MUST_BE_DOCUMENTED\nFUTURE_GAPS_REQUIRED\nVERSIONED_CHANGE_REQUIRED\n",
+        encoding="utf-8",
+    )
+    (root / "MASTER_MPP_SCHEMA_v1.md").write_text(
+        "Stage 11 = VALIDATION_ENGINE\nStage 12 = TRACE_VALIDATION\nStage 13 = COUNTERFACTUAL_TESTING\n",
+        encoding="utf-8",
+    )
+    (root / "VALIDATION_LAYER_SPEC.md").write_text(
+        "Stage 11 VALIDATION_ENGINE\nStage 12 TRACE_VALIDATION\nStage 13 COUNTERFACTUAL_TESTING\n",
+        encoding="utf-8",
+    )
+    repo_root = Path(__file__).resolve().parents[1]
+    for name in [
+        "VALIDATION_RECEIPT_SCHEMA.json",
+        "TRACE_VALIDATION_RECEIPT_SCHEMA.json",
+        "COUNTERFACTUAL_TEST_REPORT_SCHEMA.json",
+        "PROOF_REGISTRY_SCHEMA.json",
+    ]:
+        (root / name).write_text(
+            (repo_root / name).read_text(encoding="utf-8"), encoding="utf-8"
+        )
+
+
+def _paths(root: Path) -> EnginePaths:
+    return EnginePaths(
+        root,
+        root / "CURRENT_ROOT.json",
+        root / "events.jsonl",
+        root / "runtime_state.json",
+        root / "EVENT_SCHEMA.json",
+        root / "receipts",
+        root / "MASTER_WORKFLOW_V2.md",
+        root / "REPLAY_RULES.md",
+        root / "EXECUTION_GATE_SPEC.md",
+        root / "ACCEPTANCE_TESTS.md",
+        root / "AGENTS.md",
+        root / "CDR_SPEC.md",
+        root / "CDR_SECURITY.md",
+        root / "CDR_VERIFICATION.md",
+        root / "CDR_OBSERVABILITY.md",
+        root / "CDR_LIFECYCLE.md",
+        root / "MASTER_MPP_SCHEMA_v1.md",
+        root / "VALIDATION_LAYER_SPEC.md",
+    )
+
+
+def test_replay_hash_deterministic_and_order_sensitive() -> None:
+    e1 = {
+        "event_id": "e1",
+        "type": "STAGE_ENQUEUED",
+        "ts": "t",
+        "turn_id": 1,
+        "idempotency_key": "k1",
+        "payload": {"stage_id": "s1", "bounded": True},
+    }
+    e2 = {
+        "event_id": "e2",
+        "type": "STAGE_ENQUEUED",
+        "ts": "t",
+        "turn_id": 2,
+        "idempotency_key": "k2",
+        "payload": {"stage_id": "s2", "bounded": True},
+    }
+    assert _compute_replay_hash([e1, e2]) == _compute_replay_hash([e1, e2])
+    assert _compute_replay_hash([e1, e2]) != _compute_replay_hash([e2, e1])
+
+
+def test_canonical_events_hash_ignores_key_order_and_whitespace() -> None:
+    a = [
+        {
+            "event_id": "e1",
+            "turn_id": 1,
+            "payload": {"b": 2, "a": 1},
+            "type": "STAGE_ENQUEUED",
+            "idempotency_key": "k",
+            "ts": "x",
+        }
+    ]
+    b = [
+        {
+            "type": "STAGE_ENQUEUED",
+            "idempotency_key": "k",
+            "event_id": "e1",
+            "turn_id": 1,
+            "payload": {"a": 1, "b": 2},
+            "ts": "y",
+        }
+    ]
+    assert canonical_events_hash(a) == canonical_events_hash(b)
+
+
+def test_canonical_events_hash_changes_on_semantic_mutation() -> None:
+    a = [
+        {
+            "event_id": "e1",
+            "turn_id": 1,
+            "payload": {"a": 1},
+            "type": "STAGE_ENQUEUED",
+            "idempotency_key": "k",
+        }
+    ]
+    b = [
+        {
+            "event_id": "e1",
+            "turn_id": 1,
+            "payload": {"a": 2},
+            "type": "STAGE_ENQUEUED",
+            "idempotency_key": "k",
+        }
+    ]
+    assert canonical_events_hash(a) != canonical_events_hash(b)
+
+
+def test_proof_registry_chain_tamper_detected(tmp_path: Path) -> None:
+    p = tmp_path / "PROOF_REGISTRY.jsonl"
+    append_registry_atomic(p, {"trace_id": "t1"})
+    append_registry_atomic(p, {"trace_id": "t2"})
+    rows = [
+        json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()
+    ]
+    rows[0]["trace_id"] = "mutated"
+    p.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    with pytest.raises(ValidationError, match="tampered"):
+        append_registry_atomic(p, {"trace_id": "t3"})
+
+
+def test_direct_execute_blocked() -> None:
+    with pytest.raises(EngineError, match="internal-only"):
+        execute_once(None)  # type: ignore[arg-type]
+
+
+def test_self_test_fails_on_corrupt_proof_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_controls(tmp_path)
+    events = [
+        {
+            "event_id": "e1",
+            "type": "STAGE_ENQUEUED",
+            "ts": "2026-01-01T00:00:00+00:00",
+            "turn_id": 1,
+            "idempotency_key": "enqueue:s1",
+            "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+        }
+    ]
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8"
+    )
+    _execute_once_internal(_paths(tmp_path))
+    append_registry_atomic(tmp_path / "PROOF_REGISTRY.jsonl", {"trace_id": "z1"})
+    rows = [
+        json.loads(x)
+        for x in (tmp_path / "PROOF_REGISTRY.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if x.strip()
+    ]
+    rows[-1]["prev_hash"] = "bad"
+    (tmp_path / "PROOF_REGISTRY.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(
+        "src.turn_execution_engine.subprocess.run",
+        lambda *a, **k: SimpleNamespace(returncode=0, stdout="ok", stderr=""),
+    )
+    with pytest.raises(EngineError, match="MPP self-test failed"):
+        execute_with_recovery(
+            _paths(tmp_path),
+            task_id="t",
+            failure_class="SOFT_FAILURE",
+            retry_class="RETRYABLE",
+            changed_files=["src/turn_execution_engine.py"],
+        )
+
+
+def test_proof_entry_events_hash_binding_enforced(tmp_path: Path) -> None:
+    _write_controls(tmp_path)
+    events = [
+        {
+            "event_id": "e1",
+            "type": "STAGE_ENQUEUED",
+            "ts": "2026-01-01T00:00:00+00:00",
+            "turn_id": 1,
+            "idempotency_key": "enqueue:s1",
+            "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+        }
+    ]
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8"
+    )
+    _execute_once_internal(_paths(tmp_path))
+    rows = [
+        json.loads(x)
+        for x in (tmp_path / "PROOF_REGISTRY.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if x.strip()
+    ]
+    rows[-1]["events_hash"] = "bad-hash"
+    (tmp_path / "PROOF_REGISTRY.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        EngineError, match="binding missing|events_hash mismatch|MPP guard failed"
+    ):
+        execute_with_recovery(
+            _paths(tmp_path),
+            task_id="t",
+            failure_class="SOFT_FAILURE",
+            retry_class="RETRYABLE",
+        )
+
+
+def test_proof_binding_conflict_fails(tmp_path: Path) -> None:
+    _write_controls(tmp_path)
+    events = [
+        {
+            "event_id": "e1",
+            "type": "STAGE_ENQUEUED",
+            "ts": "2026-01-01T00:00:00+00:00",
+            "turn_id": 1,
+            "idempotency_key": "enqueue:s1",
+            "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+        },
+        {
+            "event_id": "e2",
+            "type": "STAGE_ENQUEUED",
+            "ts": "2026-01-01T00:00:30+00:00",
+            "turn_id": 2,
+            "idempotency_key": "enqueue:s2",
+            "payload": {"stage_id": "s2", "bounded": True, "mutates": False},
+        },
+    ]
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8"
+    )
+    _execute_once_internal(_paths(tmp_path))
+    lines = [
+        line
+        for line in (tmp_path / "PROOF_REGISTRY.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    lines.append(lines[-1])
+    (tmp_path / "PROOF_REGISTRY.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        EngineError,
+        match="duplicate trace_id|binding conflict|MPP self-test failed|MPP guard failed",
+    ):
+        execute_with_recovery(
+            _paths(tmp_path),
+            task_id="t",
+            failure_class="SOFT_FAILURE",
+            retry_class="RETRYABLE",
+        )
+
+
+def test_output_consistency_keys_by_execution_identity() -> None:
+    h1 = hashlib.sha256(
+        json.dumps({"v": 1}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    h2 = hashlib.sha256(
+        json.dumps({"v": 2}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    events = [
+        {
+            "event_id": "e1",
+            "type": "STAGE_EXECUTED",
+            "turn_id": 1,
+            "idempotency_key": "exec-1",
+            "payload": {"stage_id": "s1", "output": {"v": 1}, "output_hash": h1},
+        },
+        {
+            "event_id": "e2",
+            "type": "STAGE_EXECUTED",
+            "turn_id": 2,
+            "idempotency_key": "exec-2",
+            "payload": {"stage_id": "s1", "output": {"v": 2}, "output_hash": h2},
+        },
+    ]
+    _validate_output_consistency(events)
+
+
+def test_output_consistency_same_identity_different_output_fails() -> None:
+    h1 = hashlib.sha256(
+        json.dumps({"v": 1}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    h2 = hashlib.sha256(
+        json.dumps({"v": 2}, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    events = [
+        {
+            "event_id": "e1",
+            "type": "STAGE_EXECUTED",
+            "turn_id": 1,
+            "idempotency_key": "exec-1",
+            "payload": {"stage_id": "s1", "output": {"v": 1}, "output_hash": h1},
+        },
+        {
+            "event_id": "e2",
+            "type": "STAGE_EXECUTED",
+            "turn_id": 2,
+            "idempotency_key": "exec-1",
+            "payload": {"stage_id": "s1", "output": {"v": 2}, "output_hash": h2},
+        },
+    ]
+    with pytest.raises(EngineError, match="output mismatch"):
+        _validate_output_consistency(events)
+
+
+def test_event_order_integrity_reordered_events_fail() -> None:
+    events = [
+        {"event_id": "b", "turn_id": 2},
+        {"event_id": "a", "turn_id": 1},
+    ]
+    with pytest.raises(EngineError, match="file order drift"):
+        _validate_event_order_integrity(events)
