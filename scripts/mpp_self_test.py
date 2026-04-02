@@ -19,6 +19,7 @@ def _scenario_known_good(root: Path) -> None:
         {
             "trace_id": "self-good",
             "task_id": "self",
+            "execution_id": "self-good",
             "stage_id": "11",
             "mutation_proof": {
                 "target_id": "s1",
@@ -51,6 +52,7 @@ def _scenario_counterfactual_fail(root: Path) -> None:
             {
                 "trace_id": "self-bad-cf",
                 "task_id": "self",
+                "execution_id": "self-bad-cf",
                 "stage_id": "11",
                 "mutation_proof": {
                     "target_id": "s1",

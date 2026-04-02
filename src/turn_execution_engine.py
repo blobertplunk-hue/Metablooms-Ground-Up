@@ -237,6 +237,7 @@ def _run_mpp_self_test(
             {
                 "trace_id": "known-good-trace",
                 "task_id": "known-good-task",
+                "execution_id": execution_id or "self-test-known-good",
                 "stage_id": "11",
                 "mutation_proof": {
                     "target_id": "s1",
@@ -418,6 +419,8 @@ def _verify_execution_event_binding(paths: EnginePaths, execution_id: str) -> No
     if not executed_events:
         raise EngineError("Missing STAGE_EXECUTED event for execution binding")
     payload = executed_events[-1].get("payload", {})
+    if payload.get("execution_id") is None:
+        raise EngineError("Emitted STAGE_EXECUTED missing execution_id")
     if payload.get("execution_id") != execution_id:
         raise EngineError("Execution event binding mismatch for execution_id")
 
@@ -428,7 +431,9 @@ def _load_json_required(path: Path, label: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _ensure_proof_registry_hard_dependency(paths: EnginePaths) -> None:
+def _ensure_proof_registry_hard_dependency(
+    paths: EnginePaths, *, expected_execution_id: str | None = None
+) -> None:
     required_artifacts = {
         "VALIDATION_RECEIPT.json": paths.root / "VALIDATION_RECEIPT.json",
         "TRACE_VALIDATION_RECEIPT.json": paths.root / "TRACE_VALIDATION_RECEIPT.json",
@@ -528,6 +533,21 @@ def _ensure_proof_registry_hard_dependency(paths: EnginePaths) -> None:
         raise EngineError("Proof registry invalid counterfactual_report_ref")
     if latest.get("events_hash") != computed_events_hash:
         raise EngineError("Proof registry events_hash mismatch")
+    if expected_execution_id is not None:
+        chain_artifacts = {
+            "VALIDATION_RECEIPT.json": validation_receipt,
+            "TRACE_VALIDATION_RECEIPT.json": trace_receipt,
+            "COUNTERFACTUAL_TEST_REPORT.json": counter_report,
+            "EXECUTION_PROOF.json": execution_proof,
+            "PROOF_REGISTRY.jsonl": latest,
+        }
+        for label, payload in chain_artifacts.items():
+            if payload.get("execution_id") is None:
+                raise EngineError(f"Missing execution_id in required artifact: {label}")
+            if payload.get("execution_id") != expected_execution_id:
+                raise EngineError(
+                    f"Execution identity mismatch in required artifact: {label}"
+                )
 
 
 def replay_state(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -907,6 +927,7 @@ def execute_once(paths: EnginePaths) -> dict[str, Any]:
 def _execute_once_internal(
     paths: EnginePaths, execution_id: str | None = None
 ) -> dict[str, Any]:
+    runtime_execution_id = execution_id or str(uuid.uuid4())
     canonical_root = _canonical_root_from_file(paths.current_root)
     if canonical_root != paths.root.resolve():
         raise EngineError("Process root does not match canonical root")
@@ -992,8 +1013,7 @@ def _execute_once_internal(
                 },
             },
         }
-        if execution_id is not None:
-            candidate["payload"]["execution_id"] = execution_id
+        candidate["payload"]["execution_id"] = runtime_execution_id
         if bounded_stage.get("mutates"):
             candidate["payload"]["compensation"] = bounded_stage.get("compensation")
 
@@ -1030,6 +1050,7 @@ def _execute_once_internal(
                 {
                     "trace_id": candidate["event_id"],
                     "task_id": "stage2-turn-execution",
+                    "execution_id": runtime_execution_id,
                     "stage_id": "11",
                     "mutation_proof": mutation_proof,
                     "artifacts_present": ["events.jsonl", "runtime_state.json"],
@@ -1199,6 +1220,7 @@ def execute_with_recovery(
     if not decision.allowed:
         raise EngineError(f"Execution blocked by recovery lock: {decision.reason}")
     receipt = _execute_once_internal(paths, execution_id=execution_id)
+    _ensure_proof_registry_hard_dependency(paths, expected_execution_id=execution_id)
     _verify_execution_event_binding(paths, execution_id)
     return receipt
 

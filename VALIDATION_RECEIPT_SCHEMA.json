@@ -4,6 +4,7 @@
   "additionalProperties": false,
   "required": [
     "trace_id",
+    "execution_id",
     "task_id",
     "stage_id",
     "timestamp",
@@ -16,38 +17,98 @@
     "warnings"
   ],
   "properties": {
-    "trace_id": {"type": "string"},
-    "task_id": {"type": "string"},
-    "stage_id": {"type": "string"},
-    "timestamp": {"type": "string"},
-    "inputs_checked": {"type": "array", "items": {"type": "string"}},
-    "artifacts_checked": {"type": "array", "items": {"type": "string"}},
-    "rules_checked": {"type": "array", "items": {"type": "string"}},
+    "trace_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "stage_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "inputs_checked": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "artifacts_checked": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "rules_checked": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "mutation_proof": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["target_id", "delta_observed", "pre_hash", "post_hash"],
+      "required": [
+        "target_id",
+        "delta_observed",
+        "pre_hash",
+        "post_hash"
+      ],
       "properties": {
-        "target_id": {"type": "string"},
-        "delta_observed": {"type": "boolean"},
-        "pre_hash": {"type": "string"},
-        "post_hash": {"type": "string"}
+        "target_id": {
+          "type": "string"
+        },
+        "delta_observed": {
+          "type": "boolean"
+        },
+        "pre_hash": {
+          "type": "string"
+        },
+        "post_hash": {
+          "type": "string"
+        }
       }
     },
-    "result": {"type": "string", "enum": ["PASS", "FAIL"]},
+    "result": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
     "failures": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["rule", "failure_class", "retry_class"],
+        "required": [
+          "rule",
+          "failure_class",
+          "retry_class"
+        ],
         "properties": {
-          "rule": {"type": "string"},
-          "failure_class": {"type": "string"},
-          "retry_class": {"type": "string"}
+          "rule": {
+            "type": "string"
+          },
+          "failure_class": {
+            "type": "string"
+          },
+          "retry_class": {
+            "type": "string"
+          }
         }
       }
     },
-    "warnings": {"type": "array", "items": {"type": "string"}}
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "execution_id": {
+      "type": "string"
+    }
   }
 }

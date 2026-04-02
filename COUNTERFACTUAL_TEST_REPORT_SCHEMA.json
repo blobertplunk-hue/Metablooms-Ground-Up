@@ -3,6 +3,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
+    "execution_id",
     "scenarios_tested",
     "expected_failures",
     "observed_failures",
@@ -11,23 +12,62 @@
     "result"
   ],
   "properties": {
-    "scenarios_tested": {"type": "array", "items": {"type": "string"}},
-    "expected_failures": {"type": "array", "items": {"type": "string"}},
-    "observed_failures": {"type": "array", "items": {"type": "string"}},
-    "escaped_failures": {"type": "array", "items": {"type": "string"}},
+    "scenarios_tested": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "expected_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "observed_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "escaped_failures": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
     "distinguishing_signals": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["signal_type", "pre_hash", "post_hash"],
+        "required": [
+          "signal_type",
+          "pre_hash",
+          "post_hash"
+        ],
         "properties": {
-          "signal_type": {"type": "string"},
-          "pre_hash": {"type": "string"},
-          "post_hash": {"type": "string"}
+          "signal_type": {
+            "type": "string"
+          },
+          "pre_hash": {
+            "type": "string"
+          },
+          "post_hash": {
+            "type": "string"
+          }
         }
       }
     },
-    "result": {"type": "string", "enum": ["PASS", "FAIL"]}
+    "result": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "execution_id": {
+      "type": "string"
+    }
   }
 }

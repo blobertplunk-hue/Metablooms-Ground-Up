@@ -83,6 +83,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
     trace_id = context["trace_id"]
     task_id = context["task_id"]
     stage_id = context.get("stage_id", "11")
+    execution_id = context.get("execution_id", trace_id)
     mutation_proof = context.get("mutation_proof")
     artifacts_present = context.get("artifacts_present", [])
     execution_claimed = bool(context.get("execution_claimed", True))
@@ -173,6 +174,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
     validation_result = "PASS" if not failures else "FAIL"
     validation_receipt = {
         "trace_id": trace_id,
+        "execution_id": execution_id,
         "task_id": task_id,
         "stage_id": stage_id,
         "timestamp": _now_iso(),
@@ -230,6 +232,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
     trace_result = "PASS" if not trace_failures else "FAIL"
     execution_proof = {
         "trace_id": trace_id,
+        "execution_id": execution_id,
         "execution_events": execution_events,
         "artifacts_produced": artifacts_present,
         "proof_bindings": {
@@ -242,6 +245,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
     }
     trace_receipt = {
         "trace_id": trace_id,
+        "execution_id": execution_id,
         "task_id": task_id,
         "stage_id": "12",
         "timestamp": _now_iso(),
@@ -279,6 +283,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
     ]
     counter_result = "PASS" if not counter_failures else "FAIL"
     counterfactual_report = {
+        "execution_id": execution_id,
         "scenarios_tested": scenarios,
         "expected_failures": ["counterfactual_indistinguishable"],
         "observed_failures": [f["rule"] for f in counter_failures],
@@ -317,6 +322,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
 
     proof_registry_entry = {
         "trace_id": trace_id,
+        "execution_id": execution_id,
         "task_id": task_id,
         "timestamp": _now_iso(),
         "prev_hash": "",

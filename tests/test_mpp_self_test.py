@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src import turn_execution_engine as engine
 from src.turn_execution_engine import (
     EngineError,
     EnginePaths,
@@ -403,6 +404,159 @@ def test_guard_receipt_execution_id_mismatch_fails_closed(
         execute_with_recovery(
             _paths(tmp_path),
             task_id="guard-mismatch",
+            failure_class="SOFT_FAILURE",
+            retry_class="RETRYABLE",
+            changed_files=["src/validation_layer.py"],
+        )
+
+
+def test_self_test_receipt_execution_id_mismatch_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_controls(tmp_path)
+    enqueue = {
+        "event_id": "e1",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:00+00:00",
+        "turn_id": 1,
+        "idempotency_key": "enqueue:s1",
+        "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+    }
+    enqueue2 = {
+        "event_id": "e2",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:30+00:00",
+        "turn_id": 2,
+        "idempotency_key": "enqueue:s2",
+        "payload": {"stage_id": "s2", "bounded": True, "mutates": False},
+    }
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join([json.dumps(enqueue), json.dumps(enqueue2)]) + "\n", encoding="utf-8"
+    )
+    _execute_once_internal(_paths(tmp_path))
+
+    real_self_test = engine._run_mpp_self_test
+
+    def _wrong_self_test(root, changed_files, *, execution_id=None):
+        return real_self_test(root, changed_files, execution_id="wrong-execution-id")
+
+    monkeypatch.setattr(engine, "_run_mpp_self_test", _wrong_self_test)
+    with pytest.raises(
+        EngineError,
+        match="Enforcement receipt execution_id mismatch: MPP_SELF_TEST_RECEIPT.json",
+    ):
+        execute_with_recovery(
+            _paths(tmp_path),
+            task_id="self-test-mismatch",
+            failure_class="SOFT_FAILURE",
+            retry_class="RETRYABLE",
+            changed_files=["src/validation_layer.py"],
+        )
+
+
+def test_stage_executed_execution_id_mismatch_fails_closed(tmp_path: Path) -> None:
+    _write_controls(tmp_path)
+    (tmp_path / "events.jsonl").write_text(
+        json.dumps(
+            {
+                "event_id": "e1",
+                "type": "STAGE_EXECUTED",
+                "turn_id": 1,
+                "payload": {"stage_id": "s1", "execution_id": "wrong"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(EngineError, match="Execution event binding mismatch"):
+        engine._verify_execution_event_binding(_paths(tmp_path), "expected")
+
+
+def test_proof_registry_execution_id_mismatch_fails_closed(tmp_path: Path) -> None:
+    _write_controls(tmp_path)
+    enqueue = {
+        "event_id": "e1",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:00+00:00",
+        "turn_id": 1,
+        "idempotency_key": "enqueue:s1",
+        "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+    }
+    (tmp_path / "events.jsonl").write_text(json.dumps(enqueue) + "\n", encoding="utf-8")
+    _execute_once_internal(_paths(tmp_path), execution_id="expected-execution-id")
+    rows = [
+        json.loads(x)
+        for x in (tmp_path / "PROOF_REGISTRY.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if x.strip()
+    ]
+    rows[-1]["execution_id"] = "wrong-execution-id"
+    (tmp_path / "PROOF_REGISTRY.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        EngineError,
+        match="Execution identity mismatch in required artifact: PROOF_REGISTRY.jsonl",
+    ):
+        engine._ensure_proof_registry_hard_dependency(
+            _paths(tmp_path), expected_execution_id="expected-execution-id"
+        )
+
+
+def test_stale_receipt_replay_with_wrong_execution_id_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_controls(tmp_path)
+    enqueue = {
+        "event_id": "e1",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:00+00:00",
+        "turn_id": 1,
+        "idempotency_key": "enqueue:s1",
+        "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+    }
+    enqueue2 = {
+        "event_id": "e2",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:30+00:00",
+        "turn_id": 2,
+        "idempotency_key": "enqueue:s2",
+        "payload": {"stage_id": "s2", "bounded": True, "mutates": False},
+    }
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join([json.dumps(enqueue), json.dumps(enqueue2)]) + "\n", encoding="utf-8"
+    )
+    _execute_once_internal(_paths(tmp_path))
+    stale_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+
+    def _fake_run(args, **kwargs):
+        if "scripts.mpp_guard" in args:
+            (tmp_path / "GUARD_RECEIPT.json").write_text(
+                json.dumps(
+                    {
+                        "timestamp": stale_time.isoformat(),
+                        "mode": "ci",
+                        "result": "PASS",
+                        "error": "",
+                        "run_id": args[args.index("--run-id") + 1],
+                        "trace_id": args[args.index("--trace-id") + 1],
+                        "execution_id": "wrong-execution-id",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("src.turn_execution_engine.subprocess.run", _fake_run)
+    with pytest.raises(
+        EngineError,
+        match="Enforcement receipt is stale: GUARD_RECEIPT.json|Enforcement receipt execution_id mismatch: GUARD_RECEIPT.json",
+    ):
+        execute_with_recovery(
+            _paths(tmp_path),
+            task_id="guard-stale-wrong-id",
             failure_class="SOFT_FAILURE",
             retry_class="RETRYABLE",
             changed_files=["src/validation_layer.py"],

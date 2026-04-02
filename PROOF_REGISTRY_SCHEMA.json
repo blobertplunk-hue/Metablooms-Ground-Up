@@ -4,6 +4,7 @@
   "additionalProperties": false,
   "required": [
     "trace_id",
+    "execution_id",
     "task_id",
     "timestamp",
     "prev_hash",
@@ -17,39 +18,111 @@
     "result"
   ],
   "properties": {
-    "trace_id": {"type": "string"},
-    "task_id": {"type": "string"},
-    "timestamp": {"type": "string"},
-    "prev_hash": {"type": "string"},
-    "entry_hash": {"type": "string"},
-    "events_hash": {"type": "string"},
+    "trace_id": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "prev_hash": {
+      "type": "string"
+    },
+    "entry_hash": {
+      "type": "string"
+    },
+    "events_hash": {
+      "type": "string"
+    },
     "execution": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["trace_id", "execution_events", "artifacts_produced", "proof_bindings", "mismatches", "result"],
+      "required": [
+        "trace_id",
+        "execution_events",
+        "artifacts_produced",
+        "proof_bindings",
+        "mismatches",
+        "result"
+      ],
       "properties": {
-        "trace_id": {"type": "string"},
-        "execution_events": {"type": "array", "items": {"type": "object"}},
-        "artifacts_produced": {"type": "array", "items": {"type": "string"}},
-        "proof_bindings": {"type": "object"},
-        "mismatches": {"type": "array", "items": {"type": "object"}},
-        "result": {"type": "string", "enum": ["PASS", "FAIL"]}
+        "trace_id": {
+          "type": "string"
+        },
+        "execution_events": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "artifacts_produced": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "proof_bindings": {
+          "type": "object"
+        },
+        "mismatches": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "result": {
+          "type": "string",
+          "enum": [
+            "PASS",
+            "FAIL"
+          ]
+        }
       }
     },
-    "validation_receipt_ref": {"type": "string"},
-    "trace_receipt_ref": {"type": "string"},
-    "counterfactual_report_ref": {"type": "string"},
+    "validation_receipt_ref": {
+      "type": "string"
+    },
+    "trace_receipt_ref": {
+      "type": "string"
+    },
+    "counterfactual_report_ref": {
+      "type": "string"
+    },
     "mutation_proof": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["target_id", "delta_observed", "pre_hash", "post_hash"],
+      "required": [
+        "target_id",
+        "delta_observed",
+        "pre_hash",
+        "post_hash"
+      ],
       "properties": {
-        "target_id": {"type": "string"},
-        "delta_observed": {"type": "boolean"},
-        "pre_hash": {"type": "string"},
-        "post_hash": {"type": "string"}
+        "target_id": {
+          "type": "string"
+        },
+        "delta_observed": {
+          "type": "boolean"
+        },
+        "pre_hash": {
+          "type": "string"
+        },
+        "post_hash": {
+          "type": "string"
+        }
       }
     },
-    "result": {"type": "string", "enum": ["PASS", "FAIL"]}
+    "result": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL"
+      ]
+    },
+    "execution_id": {
+      "type": "string"
+    }
   }
 }
