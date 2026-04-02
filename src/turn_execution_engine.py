@@ -215,7 +215,12 @@ def _should_run_mpp_self_test(changed_files: list[str] | None) -> bool:
     return any(path in mpp_targets for path in changed_files)
 
 
-def _run_mpp_self_test(root: Path, changed_files: list[str] | None) -> None:
+def _run_mpp_self_test(
+    root: Path,
+    changed_files: list[str] | None,
+    *,
+    execution_id: str | None = None,
+) -> None:
     invariant_ok = True
     invariant_error = ""
     try:
@@ -311,6 +316,7 @@ def _run_mpp_self_test(root: Path, changed_files: list[str] | None) -> None:
         )
     receipt = {
         "timestamp": _now_iso(),
+        "execution_id": execution_id,
         "changed_files": changed_files,
         "tests_required": cmd[2:],
         "command": " ".join(cmd),
@@ -340,6 +346,7 @@ def _run_mpp_guard(
     mode: str = "ci",
     run_id: str | None = None,
     trace_id: str | None = None,
+    execution_id: str | None = None,
 ) -> None:
     run_root = Path(__file__).resolve().parents[1]
     cmd = ["python", "-m", "scripts.mpp_guard", "--mode", mode, "--root", str(root)]
@@ -347,6 +354,8 @@ def _run_mpp_guard(
         cmd.extend(["--run-id", run_id])
     if trace_id:
         cmd.extend(["--trace-id", trace_id])
+    if execution_id:
+        cmd.extend(["--execution-id", execution_id])
     result = subprocess.run(
         cmd,
         cwd=str(run_root),
@@ -367,6 +376,7 @@ def _verify_enforcement_receipt(
     max_staleness_seconds: int = 30,
     expected_run_id: str | None = None,
     expected_trace_id: str | None = None,
+    expected_execution_id: str | None = None,
 ) -> None:
     if not path.exists():
         raise EngineError(f"Missing enforcement receipt: {path.name}")
@@ -395,6 +405,21 @@ def _verify_enforcement_receipt(
     if expected_trace_id is not None:
         if payload.get("trace_id") != expected_trace_id:
             raise EngineError(f"Enforcement receipt trace_id mismatch: {path.name}")
+    if expected_execution_id is not None:
+        if payload.get("execution_id") != expected_execution_id:
+            raise EngineError(f"Enforcement receipt execution_id mismatch: {path.name}")
+
+
+def _verify_execution_event_binding(paths: EnginePaths, execution_id: str) -> None:
+    events = _load_events(paths.events)
+    executed_events = [
+        event for event in events if event.get("type") == "STAGE_EXECUTED"
+    ]
+    if not executed_events:
+        raise EngineError("Missing STAGE_EXECUTED event for execution binding")
+    payload = executed_events[-1].get("payload", {})
+    if payload.get("execution_id") != execution_id:
+        raise EngineError("Execution event binding mismatch for execution_id")
 
 
 def _load_json_required(path: Path, label: str) -> dict[str, Any]:
@@ -879,7 +904,9 @@ def execute_once(paths: EnginePaths) -> dict[str, Any]:
     )
 
 
-def _execute_once_internal(paths: EnginePaths) -> dict[str, Any]:
+def _execute_once_internal(
+    paths: EnginePaths, execution_id: str | None = None
+) -> dict[str, Any]:
     canonical_root = _canonical_root_from_file(paths.current_root)
     if canonical_root != paths.root.resolve():
         raise EngineError("Process root does not match canonical root")
@@ -965,6 +992,8 @@ def _execute_once_internal(paths: EnginePaths) -> dict[str, Any]:
                 },
             },
         }
+        if execution_id is not None:
+            candidate["payload"]["execution_id"] = execution_id
         if bounded_stage.get("mutates"):
             candidate["payload"]["compensation"] = bounded_stage.get("compensation")
 
@@ -1134,17 +1163,26 @@ def execute_with_recovery(
 ) -> dict[str, Any]:
     run_started_at = datetime.now(timezone.utc)
     run_id = str(uuid.uuid4())
-    _run_mpp_self_test(paths.root, changed_files)
-    _run_mpp_guard(paths.root, mode="ci", run_id=run_id, trace_id=task_id)
+    execution_id = str(uuid.uuid4())
+    _run_mpp_self_test(paths.root, changed_files, execution_id=execution_id)
+    _run_mpp_guard(
+        paths.root,
+        mode="ci",
+        run_id=run_id,
+        trace_id=task_id,
+        execution_id=execution_id,
+    )
     _verify_enforcement_receipt(
         paths.root / "MPP_SELF_TEST_RECEIPT.json",
         run_started_at=run_started_at,
+        expected_execution_id=execution_id,
     )
     _verify_enforcement_receipt(
         paths.root / "GUARD_RECEIPT.json",
         run_started_at=run_started_at,
         expected_run_id=run_id,
         expected_trace_id=task_id,
+        expected_execution_id=execution_id,
     )
     _ensure_proof_registry_hard_dependency(paths)
 
@@ -1160,7 +1198,9 @@ def execute_with_recovery(
     )
     if not decision.allowed:
         raise EngineError(f"Execution blocked by recovery lock: {decision.reason}")
-    return _execute_once_internal(paths)
+    receipt = _execute_once_internal(paths, execution_id=execution_id)
+    _verify_execution_event_binding(paths, execution_id)
+    return receipt
 
 
 def parse_args() -> argparse.Namespace:

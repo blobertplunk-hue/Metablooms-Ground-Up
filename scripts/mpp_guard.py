@@ -91,6 +91,7 @@ def _write_receipt(
     error: str = "",
     run_id: str | None = None,
     trace_id: str | None = None,
+    execution_id: str | None = None,
 ) -> None:
     payload = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -102,6 +103,8 @@ def _write_receipt(
         payload["run_id"] = run_id
     if trace_id is not None:
         payload["trace_id"] = trace_id
+    if execution_id is not None:
+        payload["execution_id"] = execution_id
     (root / "GUARD_RECEIPT.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -113,6 +116,7 @@ def main() -> int:
     parser.add_argument("--root", default=".")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--trace-id", default=None)
+    parser.add_argument("--execution-id", default=None)
     args = parser.parse_args()
     root = Path(args.root).resolve()
     try:
@@ -125,9 +129,17 @@ def main() -> int:
             str(exc),
             run_id=args.run_id,
             trace_id=args.trace_id,
+            execution_id=args.execution_id,
         )
         raise
-    _write_receipt(root, "PASS", args.mode, run_id=args.run_id, trace_id=args.trace_id)
+    _write_receipt(
+        root,
+        "PASS",
+        args.mode,
+        run_id=args.run_id,
+        trace_id=args.trace_id,
+        execution_id=args.execution_id,
+    )
     return 0
 
 

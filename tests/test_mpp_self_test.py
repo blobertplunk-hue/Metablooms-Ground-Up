@@ -228,6 +228,7 @@ def test_mpp_self_test_success_writes_receipt(
                         "error": "",
                         "run_id": args[args.index("--run-id") + 1],
                         "trace_id": args[args.index("--trace-id") + 1],
+                        "execution_id": args[args.index("--execution-id") + 1],
                     }
                 )
                 + "\n",
@@ -329,6 +330,7 @@ def test_stale_same_day_guard_receipt_fails_closed(
                         "error": "",
                         "run_id": args[args.index("--run-id") + 1],
                         "trace_id": args[args.index("--trace-id") + 1],
+                        "execution_id": args[args.index("--execution-id") + 1],
                     }
                 )
                 + "\n",
@@ -343,6 +345,64 @@ def test_stale_same_day_guard_receipt_fails_closed(
         execute_with_recovery(
             _paths(tmp_path),
             task_id="guard-stale-receipt",
+            failure_class="SOFT_FAILURE",
+            retry_class="RETRYABLE",
+            changed_files=["src/validation_layer.py"],
+        )
+
+
+def test_guard_receipt_execution_id_mismatch_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_controls(tmp_path)
+    enqueue = {
+        "event_id": "e1",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:00+00:00",
+        "turn_id": 1,
+        "idempotency_key": "enqueue:s1",
+        "payload": {"stage_id": "s1", "bounded": True, "mutates": False},
+    }
+    enqueue2 = {
+        "event_id": "e2",
+        "type": "STAGE_ENQUEUED",
+        "ts": "2026-01-01T00:00:30+00:00",
+        "turn_id": 2,
+        "idempotency_key": "enqueue:s2",
+        "payload": {"stage_id": "s2", "bounded": True, "mutates": False},
+    }
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join([json.dumps(enqueue), json.dumps(enqueue2)]) + "\n", encoding="utf-8"
+    )
+    _execute_once_internal(_paths(tmp_path))
+
+    def _fake_run(args, **kwargs):
+        if "scripts.mpp_guard" in args:
+            (tmp_path / "GUARD_RECEIPT.json").write_text(
+                json.dumps(
+                    {
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "mode": "ci",
+                        "result": "PASS",
+                        "error": "",
+                        "run_id": args[args.index("--run-id") + 1],
+                        "trace_id": args[args.index("--trace-id") + 1],
+                        "execution_id": "wrong-execution-id",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr("src.turn_execution_engine.subprocess.run", _fake_run)
+    with pytest.raises(
+        EngineError,
+        match="Enforcement receipt execution_id mismatch: GUARD_RECEIPT.json",
+    ):
+        execute_with_recovery(
+            _paths(tmp_path),
+            task_id="guard-mismatch",
             failure_class="SOFT_FAILURE",
             retry_class="RETRYABLE",
             changed_files=["src/validation_layer.py"],
