@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "counterfactual_report_ref": {
+      "type": "string"
+    },
+    "current_hash": {
+      "type": "string"
+    },
+    "entry_hash": {
+      "type": "string"
+    },
+    "events_hash": {
+      "type": "string"
+    },
+    "execution": {
+      "additionalProperties": true,
+      "properties": {
+        "artifacts_produced": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "execution_events": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "mismatches": {
+          "items": {
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "proof_bindings": {
+          "type": "object"
+        },
+        "result": {
+          "enum": [
+            "PASS",
+            "FAIL"
+          ],
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "trace_id",
+        "execution_events",
+        "artifacts_produced",
+        "proof_bindings",
+        "mismatches",
+        "result"
+      ],
+      "type": "object"
+    },
+    "execution_id": {
+      "type": "string"
+    },
+    "invariant_registry_version": {
+      "type": "string"
+    },
+    "mutation_proof": {
+      "additionalProperties": true,
+      "properties": {
+        "delta_observed": {
+          "type": "boolean"
+        },
+        "post_hash": {
+          "type": "string"
+        },
+        "pre_hash": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "target_id",
+        "delta_observed",
+        "pre_hash",
+        "post_hash"
+      ],
+      "type": "object"
+    },
+    "mpp_hash": {
+      "type": "string"
+    },
+    "bts_hash": {
+      "type": "string"
+    },
+    "optimality_hash": {
+      "type": "string"
+    },
+    "prev_hash": {
+      "type": "string"
+    },
+    "result": {
+      "enum": [
+        "PASS",
+        "FAIL"
+      ],
+      "type": "string"
+    },
+    "state_hash_after": {
+      "type": "string"
+    },
+    "task_id": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "trace_id": {
+      "type": "string"
+    },
+    "trace_receipt_ref": {
+      "type": "string"
+    },
+    "validation_receipt_ref": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "trace_id",
+    "invariant_registry_version",
+    "execution_id",
+    "task_id",
+    "timestamp",
+    "prev_hash",
+    "current_hash",
+    "entry_hash",
+    "events_hash",
+    "mpp_hash",
+    "bts_hash",
+    "optimality_hash",
+    "state_hash_after",
+    "execution",
+    "validation_receipt_ref",
+    "trace_receipt_ref",
+    "counterfactual_report_ref",
+    "mutation_proof",
+    "result"
+  ],
+  "type": "object"
+}

@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Implementation Reality Artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "base",
+    "head",
+    "classification",
+    "classification_hash",
+    "claim_assessment",
+    "invariant_report",
+    "result"
+  ],
+  "properties": {
+    "base": {"type": "string"},
+    "head": {"type": "string"},
+    "classification_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "changed_files",
+        "formatting_only",
+        "docs_only",
+        "tests_only",
+        "semantic_code",
+        "schema_or_contract",
+        "runtime_enforcement",
+        "verifier_enforcement",
+        "export_audit_surface",
+        "no_op"
+      ],
+      "properties": {
+        "changed_files": {"type": "array", "items": {"type": "string"}},
+        "formatting_only": {"type": "boolean"},
+        "docs_only": {"type": "boolean"},
+        "tests_only": {"type": "boolean"},
+        "semantic_code": {"type": "boolean"},
+        "schema_or_contract": {"type": "boolean"},
+        "runtime_enforcement": {"type": "boolean"},
+        "verifier_enforcement": {"type": "boolean"},
+        "export_audit_surface": {"type": "boolean"},
+        "no_op": {"type": "boolean"}
+      }
+    },
+    "claim": {"type": "object"},
+    "claim_assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures", "metadata"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "failures": {"type": "array", "items": {"type": "string"}},
+        "metadata": {"type": "object"}
+      }
+    },
+    "invariant_report": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failures", "checked"],
+      "properties": {
+        "passed": {"type": "boolean"},
+        "failures": {"type": "array"},
+        "checked": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "result": {"type": "string", "enum": ["PASS", "FAIL"]}
+  }
+}
