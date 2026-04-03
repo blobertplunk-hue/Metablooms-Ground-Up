@@ -1,0 +1,7 @@
+{
+  "coverage_map_sha256": "7bf8bf03ffb927a0f26de92fb0276483d8910672fdd1a77b29db3c0dd6dc83f5",
+  "invariant_registry_version": "1.0.0",
+  "non_semantic_event_fields": [
+    "ts"
+  ]
+}

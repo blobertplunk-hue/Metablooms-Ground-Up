@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["task_id", "requires_see", "requires_multi_option", "requires_refinement"],
+  "properties": {
+    "task_id": {"type": "string", "minLength": 1},
+    "requires_see": {"type": "boolean"},
+    "requires_multi_option": {"type": "boolean"},
+    "requires_refinement": {"type": "boolean"}
+  }
+}

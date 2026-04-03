@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["options", "chosen_option"],
+  "properties": {
+    "options": {"type": "array", "minItems": 5},
+    "chosen_option": {"type": "string"}
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "event_id",
+    "type",
+    "ts",
+    "turn_id",
+    "idempotency_key",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {"type": "string"},
+    "type": {"type": "string", "enum": ["STAGE_ENQUEUED", "STAGE_EXECUTED"]},
+    "ts": {"type": "string"},
+    "turn_id": {"type": "integer"},
+    "idempotency_key": {"type": "string"},
+    "state_hash_before": {"type": "string"},
+    "state_hash_after": {"type": "string"},
+    "payload": {
+      "type": "object",
+      "required": ["stage_id", "bounded"],
+      "properties": {
+        "stage_id": {"type": "string"},
+        "bounded": {"type": "boolean"},
+        "mutates": {"type": "boolean"},
+        "status": {"type": "string"},
+        "output": {"type": "object"},
+        "output_hash": {"type": "string"},
+        "params": {"type": "object"},
+        "compensation": {
+          "type": "object",
+          "required": ["strategy"],
+          "properties": {
+            "strategy": {"type": "string"},
+            "metadata": {"type": "object"}
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
