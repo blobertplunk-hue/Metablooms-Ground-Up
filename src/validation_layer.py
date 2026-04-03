@@ -13,6 +13,12 @@ from jsonschema import (
     ValidationError as JsonSchemaValidationError,
     validate,
 )
+from src.invariants import (
+    FunctionInvariant,
+    Invariant,
+    ValidationResult,
+    run_all_invariants,
+)
 
 
 class ValidationError(RuntimeError):
@@ -79,25 +85,15 @@ def _require_fields(
     return missing
 
 
-def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
-    trace_id = context["trace_id"]
-    task_id = context["task_id"]
-    stage_id = context.get("stage_id", "11")
-    execution_id = context.get("execution_id", trace_id)
+def validate_mutation_proof(context: dict[str, Any]) -> ValidationResult:
     mutation_proof = context.get("mutation_proof")
-    artifacts_present = context.get("artifacts_present", [])
-    execution_claimed = bool(context.get("execution_claimed", True))
-    execution_events = context.get("execution_events", [])
     pre_hash = context.get("pre_hash")
     post_hash = context.get("post_hash")
-    schema_dir = Path(context.get("schema_dir", "."))
-    mutated_artifact = context.get("mutated_artifact")
-    events_hash = context.get("events_hash", "")
+    artifacts_present = context.get("artifacts_present", [])
 
     failures: list[dict[str, str]] = []
     warnings: list[str] = []
 
-    # Stage 11 VALIDATION_ENGINE
     if mutation_proof is None:
         failures.append(
             {
@@ -170,6 +166,112 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
                 "retry_class": "NON_RETRYABLE",
             }
         )
+    return ValidationResult(
+        name="MutationProofInvariant",
+        failures=failures,
+        warnings=warnings,
+        details={"required_artifacts": required_artifacts},
+    )
+
+
+def validate_trace_consistency(context: dict[str, Any]) -> ValidationResult:
+    mutation_proof = context.get("mutation_proof")
+    execution_claimed = bool(context.get("execution_claimed", True))
+    execution_events = context.get("execution_events", [])
+    mutated_artifact = context.get("mutated_artifact")
+    failures: list[dict[str, str]] = []
+    if execution_claimed and not execution_events:
+        failures.append(
+            {
+                "rule": "execution_proof_required",
+                "failure_class": "HARD_FAILURE",
+                "retry_class": "NON_RETRYABLE",
+            }
+        )
+    if execution_claimed and mutation_proof and execution_events:
+        if mutation_proof.get("target_id") not in [
+            e.get("stage_id") for e in execution_events
+        ]:
+            failures.append(
+                {
+                    "rule": "cross_artifact_consistency",
+                    "failure_class": "HARD_FAILURE",
+                    "retry_class": "NON_RETRYABLE",
+                }
+            )
+        bound = [
+            e
+            for e in execution_events
+            if e.get("target_id") == mutation_proof.get("target_id")
+            and e.get("artifact_id") == mutated_artifact
+        ]
+        if not bound:
+            failures.append(
+                {
+                    "rule": "causal_binding_missing",
+                    "failure_class": "HARD_FAILURE",
+                    "retry_class": "NON_RETRYABLE",
+                }
+            )
+    return ValidationResult(
+        name="TraceConsistencyInvariant",
+        failures=failures,
+        warnings=[],
+        details={},
+    )
+
+
+def validate_counterfactual(context: dict[str, Any]) -> ValidationResult:
+    pre_hash = context.get("pre_hash")
+    post_hash = context.get("post_hash")
+    failures: list[dict[str, str]] = []
+    distinguishing_signals: list[dict[str, str]] = []
+    if pre_hash and post_hash and pre_hash != post_hash:
+        distinguishing_signals.append(
+            {
+                "signal_type": "hash_transition",
+                "pre_hash": pre_hash,
+                "post_hash": post_hash,
+            }
+        )
+    if not distinguishing_signals:
+        failures.append(
+            {
+                "rule": "counterfactual_indistinguishable",
+                "failure_class": "HARD_FAILURE",
+                "retry_class": "NON_RETRYABLE",
+            }
+        )
+    return ValidationResult(
+        name="CounterfactualInvariant",
+        failures=failures,
+        warnings=[],
+        details={"distinguishing_signals": distinguishing_signals},
+    )
+
+
+def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
+    trace_id = context["trace_id"]
+    task_id = context["task_id"]
+    stage_id = context.get("stage_id", "11")
+    execution_id = context.get("execution_id", trace_id)
+    mutation_proof = context.get("mutation_proof")
+    artifacts_present = context.get("artifacts_present", [])
+    execution_events = context.get("execution_events", [])
+    schema_dir = Path(context.get("schema_dir", "."))
+    events_hash = context.get("events_hash", "")
+    registry: list[Invariant] = [
+        FunctionInvariant("MutationProofInvariant", validate_mutation_proof),
+        FunctionInvariant("TraceConsistencyInvariant", validate_trace_consistency),
+        FunctionInvariant("CounterfactualInvariant", validate_counterfactual),
+    ]
+    invariant_results = run_all_invariants(context, registry)
+    mutation_result = invariant_results[0]
+    trace_result_obj = invariant_results[1]
+    counter_result_obj = invariant_results[2]
+    failures = mutation_result.failures
+    warnings = mutation_result.warnings
+    required_artifacts = mutation_result.details["required_artifacts"]
 
     validation_result = "PASS" if not failures else "FAIL"
     validation_receipt = {
@@ -193,42 +295,7 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
         "warnings": warnings,
     }
 
-    # Stage 12 TRACE_VALIDATION
-    trace_failures: list[dict[str, str]] = []
-    if execution_claimed and not execution_events:
-        trace_failures.append(
-            {
-                "rule": "execution_proof_required",
-                "failure_class": "HARD_FAILURE",
-                "retry_class": "NON_RETRYABLE",
-            }
-        )
-    if execution_claimed and mutation_proof and execution_events:
-        if mutation_proof.get("target_id") not in [
-            e.get("stage_id") for e in execution_events
-        ]:
-            trace_failures.append(
-                {
-                    "rule": "cross_artifact_consistency",
-                    "failure_class": "HARD_FAILURE",
-                    "retry_class": "NON_RETRYABLE",
-                }
-            )
-        bound = [
-            e
-            for e in execution_events
-            if e.get("target_id") == mutation_proof.get("target_id")
-            and e.get("artifact_id") == mutated_artifact
-        ]
-        if not bound:
-            trace_failures.append(
-                {
-                    "rule": "causal_binding_missing",
-                    "failure_class": "HARD_FAILURE",
-                    "retry_class": "NON_RETRYABLE",
-                }
-            )
-
+    trace_failures = trace_result_obj.failures
     trace_result = "PASS" if not trace_failures else "FAIL"
     execution_proof = {
         "trace_id": trace_id,
@@ -254,25 +321,8 @@ def run_validation_pipeline(context: dict[str, Any]) -> ValidationArtifacts:
         "failures": trace_failures,
     }
 
-    # Stage 13 COUNTERFACTUAL_TESTING
-    counter_failures: list[dict[str, str]] = []
-    distinguishing_signals: list[dict[str, str]] = []
-    if pre_hash and post_hash and pre_hash != post_hash:
-        distinguishing_signals.append(
-            {
-                "signal_type": "hash_transition",
-                "pre_hash": pre_hash,
-                "post_hash": post_hash,
-            }
-        )
-    if not distinguishing_signals:
-        counter_failures.append(
-            {
-                "rule": "counterfactual_indistinguishable",
-                "failure_class": "HARD_FAILURE",
-                "retry_class": "NON_RETRYABLE",
-            }
-        )
+    counter_failures = counter_result_obj.failures
+    distinguishing_signals = counter_result_obj.details["distinguishing_signals"]
 
     scenarios = [
         "state_reversal",
