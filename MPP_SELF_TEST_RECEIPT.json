@@ -1,0 +1,10 @@
+{
+  "result": "PASS",
+  "scenarios": {
+    "broken_proof_chain": "PASS",
+    "counterfactual_indistinguishable": "PASS",
+    "known_good": "PASS",
+    "recovery_logic": "PASS",
+    "replay_mismatch": "PASS"
+  }
+}

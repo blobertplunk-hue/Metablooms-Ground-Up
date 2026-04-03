@@ -1,0 +1,24 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        args: ["src", "--ignore-missing-imports"]
+        pass_filenames: false
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest-fast
+        entry: pytest -q tests/test_validation_layer.py tests/test_recovery_lock_engine.py
+        language: system
+        pass_filenames: false
+      - id: mpp-guard
+        name: mpp-guard
+        entry: python -m scripts.mpp_guard --mode=staged
+        language: system
+        pass_filenames: false
